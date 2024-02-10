@@ -1,12 +1,10 @@
-from flask import Flask, render_template,Response,request,redirect,url_for
+from flask import Flask, render_template,Response,request,redirect,url_for,flash
 import os
 import cv2
-import dlib
 import tensorflow as tf
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import threading
 import random
 
 app=Flask(__name__)
@@ -36,34 +34,50 @@ def generate_frames():
         yield(b'--frame\r\n' b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
 def crop_image():
-    detector = dlib.get_frontal_face_detector()
+    detector = cv2.CascadeClassifier(r"Models\haarcascade_frontalface_default.xml")
     try:
-        loaded_image=cv2.imread("static\Test Images\image_test.jpg")
+        loaded_image=cv2.imread(r"static\Test Images\image_test.jpg")
+        gray=cv2.cvtColor(loaded_image, cv2.COLOR_BGR2GRAY) 
         if loaded_image is not None:
-            rects=detector(loaded_image)
-            if rects:
-                for rect in rects:
-                    cropped_image=loaded_image[rect.top()-40:rect.bottom()+20,rect.left()-10:rect.right()+10]
+            rect=detector.detectMultiScale(gray, 1.1, 5) 
+            print(rect)
+            if rect.size!=0:
+                for (x,y,w,h) in rect: 
+                    cropped_image=loaded_image[y:y+h+15, x:x+w]
                     cropped_image=cv2.resize(cropped_image,(300,300))
                     path = os.path.join("static\Test Images", "cropped_image_test.jpg")
                     cv2.imwrite(path,cropped_image)
-                    break
+                    print("Done")
+                    return True  
             else:
-                crop_image()
-
+                print("No Face")
+        else:
+            print("Not loaded image!")
+            return False
     except Exception as e:
-        crop_image()
+       print(e)
+       return False
    
 def shape():
     global face_shape
-    model=tf.keras.models.load_model("Models\Face_detection_CNN_8072.h5")
+    plt.switch_backend('agg')
+    interpreter = tf.lite.Interpreter(model_path=r"Models\face_shape_model.tflite")
+    interpreter.allocate_tensors()
+
+    input_details = interpreter.get_input_details()
+    output_details = interpreter.get_output_details()
+
     img_path="static\Test Images\cropped_image_test.jpg"
     image=cv2.imread(img_path)
     image=cv2.resize(image, (128, 128))
     x=np.array(image)/255
-    x = np.expand_dims(x, axis=0)
-    plt.switch_backend('agg')
-    output=model.predict(x)
+    input_data =  np.array(np.expand_dims(x, axis=0), dtype=np.float32)
+    interpreter.set_tensor(input_details[0]['index'], input_data)
+
+    interpreter.invoke()
+
+    output = interpreter.get_tensor(output_details[0]['index'])
+    
     output=np.array(output).flatten()
     l=[]
     labels=["Heart","Oblong","Oval","Round","Square"]
@@ -72,22 +86,20 @@ def shape():
     plt.bar(labels,l,color ='blue',width=0.5)
     plt.savefig(r"C:\Users\rajur\Projects\Face Shape main\static\Test Images\graph.png")
     plt.close()
-    face_shape=labels[l.index(max(l))]
+    face_shape=labels[np.argmax(l)]
 
 def gender():
     global sex
-    model=tf.keras.models.load_model("Models\gender_model.h5")
-    img_path="static\Test Images\cropped_image_test.jpg"
-    image=cv2.imread(img_path,0)
-    image=cv2.resize(image, (100, 100))
-    x=np.array(image)/255
-    x = np.expand_dims(x, axis=0)
-    output=model.predict(x)
-    output=np.array(output).flatten()
-    if output[0]>output[1]:
-        sex= "Male"
-    else:
-        sex= "Female"
+    image=cv2.imread(r"static\Test Images\cropped_image_test.jpg")
+    model=cv2.dnn.readNet(r"Models\gender_net.caffemodel",r"Models\gender_deploy.prototxt")
+    genderList = ['Male', 'Female']
+    
+    blob = cv2.dnn.blobFromImage(image, 1, (227, 227), swapRB=False)
+    model.setInput(blob)
+    genderPreds = model.forward()
+    sex = genderList[genderPreds[0].argmax()]
+    print("Gender Output : {}".format(genderPreds))
+    print("Gender : {}".format(sex))
 
 
 @app.route('/')
@@ -100,14 +112,11 @@ def video_feed():
   
 @app.route('/analyse')
 def analyse():
-    crop_image()
-    t1=threading.Thread(target=shape)
-    t2=threading.Thread(target=gender)
-    t1.start()
-    t2.start()
-
-    t1.join()
-    t2.join()
+    stat=crop_image()
+    if not(stat):
+        return render_template("index.html")
+    shape()
+    gender()
     print(face_shape,sex)
 
     data=pd.read_excel("Hairstyle dataset.xlsx")
