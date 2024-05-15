@@ -1,4 +1,4 @@
-from flask import Flask, render_template,Response,request,redirect,url_for,flash
+from flask import Flask, render_template,Response,request,redirect,url_for
 import os
 import cv2
 import tensorflow as tf
@@ -47,15 +47,9 @@ def crop_image():
                     cropped_image=cv2.resize(cropped_image,(300,300))
                     path = os.path.join("static\Test Images", "cropped_image_test.jpg")
                     cv2.imwrite(path,cropped_image)
-                    print("Done")
                     return True  
-            else:
-                print("No Face")
-        else:
-            print("Not loaded image!")
-            return False
+        return False
     except Exception as e:
-       print(e)
        return False
    
 def shape():
@@ -139,6 +133,8 @@ def tasks():
         global capture
         capture=1
         return redirect(url_for('analyse'))
+    elif request.form.get('Home') == 'Home':
+        return redirect(url_for('index'))
     return render_template('index.html')
 
 
